@@ -6,5 +6,5 @@
 *.exe
 *.o
 *.so
-/home/ngtv/Public/Study/C/MulSocket/selectClient
-/home/ngtv/Public/Study/C/MulSocket/selectServer
+selectClient
+selectServer

@@ -62,7 +62,7 @@ int main(void)
 
 	// get us a socket and bind it
 	memset(&hints, 0, sizeof hints);
-	hints.ai_family = AF_UNSPEC;
+	hints.ai_family = AF_INET6;
 	hints.ai_socktype = SOCK_STREAM;
 	hints.ai_flags = AI_PASSIVE;
 
@@ -77,7 +77,6 @@ int main(void)
 			continue;
 		}
 		
-
 		if (bind(listener, p->ai_addr, p->ai_addrlen) < 0) {
 			close(listener);
 			continue;
@@ -131,14 +130,11 @@ int main(void)
                     } else {
                         clients[clients_count].sock_fd = newfd;
                         bzero(clients[clients_count++].name, 256);
-                        char *input_name = "Enter your chat name: ";
                         
-                        if(write(newfd, input_name, 22) < 0){
+                        
+                        if(write(newfd, "ATSIUSKVARDA\n", 13) < 0){
                             perror("write:");
                         }
-                        else    
-                            printf("Send join msg\n");
-
             
                         FD_SET(newfd, &master); // add to master set
                         if (newfd > fdmax) {    // keep track of the max
@@ -177,32 +173,39 @@ int main(void)
                     } else {
 
                         printf("n = %d\n", nbytes);
+
+                        for(int i = 0; i < strlen(buf); i++){
+                            if(buf[i] < 32)
+                                buf[i] = '\0';
+                        }
+
                         if(clients[j].name[0] == 0){
                             strcpy(clients[j].name, buf);
-                            strcat(buf, " join in chat");
-                            write(clients[j].sock_fd, "------------------------\n        WELCOME\n------------------------", 67);
-                            clients[j].name[nbytes] = ':';
-                            clients[j].name[nbytes+1] = ' ';
-
-                        }
-                        else{
-                            strcpy(tmp, buf);
-                            strcpy(buf, clients[j].name);
+                            write(clients[j].sock_fd, "VARDASOK\n", 9);
+                        }else
+                        {
+                            char tmp[1024];
+                            strcpy(tmp, buf);       
+                            strcpy(buf, "PRANESIMAS");
+                            strcat(buf, clients[j].name);
+                            strcat(buf, ": ");
                             strcat(buf, tmp);
-                        }
+                            buf[strlen(buf)] = '\n';
 
-                        for(int k = 0; k < clients_count; k++) {
-                            // send to everyone!
-                            if (FD_ISSET(clients[k].sock_fd, &master)) {
-                                // except the listener and ourselves
-                                if (clients[k].sock_fd != listener && clients[k].sock_fd != i && clients[k].name[0] != 0){
-                                    if (send(clients[k].sock_fd , buf, strlen(buf), 0) == -1) {
-                                        perror("send");
+                            for(int k = 0; k < clients_count; k++) {
+                                // send to everyone!
+                                if (FD_ISSET(clients[k].sock_fd, &master)) {
+                                    // except the listener and ourselves
+                                    if (clients[k].sock_fd != listener && clients[k].name[0] != 0){
+                                        if (send(clients[k].sock_fd , buf, strlen(buf), 0) == -1) {
+                                            perror("send");
+                                        }
+                                        
                                     }
-                                    
                                 }
                             }
-                        }
+                        }  
+
                     }
                 } // END handle data from client
             } // END got new incoming connection

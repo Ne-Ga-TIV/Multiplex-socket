@@ -11,16 +11,20 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <time.h>
 
-#define PORT "3222"   // port we're listening on
+#define PORTCHAT "3222"
+#define PORTFILE "8888"     // port we're listening on
 #define MAXCLIENTS 20
 
 struct client{
-    char name[256];
+    char name[256], last_msg[1024];
     int sock_fd;
+    
 }clients[MAXCLIENTS];
 
 // get sockaddr, IPv4 or IPv6:
+
 void *get_in_addr(struct sockaddr *sa)
 {
 	if (sa->sa_family == AF_INET) {
@@ -29,32 +33,53 @@ void *get_in_addr(struct sockaddr *sa)
 
 	return &(((struct sockaddr_in6*)sa)->sin6_addr);
 }
-
+char* create_msg(char *name, struct tm time, char* msg, char *task){
+    
+    char* buf = malloc(2000*sizeof(char));
+    bzero(buf, sizeof(buf));
+    char time_str[10];
+    sprintf(time_str, "%02d:%02d", time.tm_hour, time.tm_min);
+    strcat(buf, name);
+    strcat(buf, "@");
+    strcat(buf, time_str);
+    strcat(buf, "@");
+    strcat(buf, msg);
+    strcat(buf, "@");
+    strcat(buf, task);
+    return buf;
+}
 void delete_client(int index)
 {
     for(int i = index; i < MAXCLIENTS - 1; i++)
         clients[i] = clients[i+1];
     
 }
+int name_cheack(char *name){
+    
+    for(int i = 0; i < MAXCLIENTS; i++)
+        if(!strcmp(name, clients[i].name)){ 
+            return 1;
+        }
 
+    for(int i = 0; name[i] != '\0'; i++)
+        if(!((name[i] >= 65 && name[i] <= 90) 
+        || (name[i] >= 97 && name[i] <= 122) 
+        || (name[i] >= 48 && name[i] <= 57))){
+            return 1;
+        }
+
+    return 0;
+
+}
 int main(void)
 {
     fd_set master;    // master file descriptor list
     fd_set read_fds;  // temp file descriptor list for select()
-    int fdmax, clients_count = 0;        // maximum file descriptor number
-    int listener;     // listening socket descriptor
-    int newfd;        // newly accept()ed socket descriptor
-    struct sockaddr_storage remoteaddr; // client address
+    int fdmax, clients_count = 0, listener, newfd, nbytes, i, rv, fileServer;
+    struct sockaddr_storage remoteaddr; 
     socklen_t addrlen;
-
-    char buf[1024], tmp[1024];    // buffer for client data
-    int nbytes;
-
+    char buf[1024]; // buffer for client data
 	char remoteIP[INET6_ADDRSTRLEN];
-
-    int yes=1;        // for setsockopt() SO_REUSEADDR, below
-    int i, rv;
-
 	struct addrinfo hints, *ai, *p;
 
     FD_ZERO(&master);    // clear the master and temp sets
@@ -66,7 +91,7 @@ int main(void)
 	hints.ai_socktype = SOCK_STREAM;
 	hints.ai_flags = AI_PASSIVE;
 
-	if ((rv = getaddrinfo(NULL, PORT, &hints, &ai)) != 0) {
+	if ((rv = getaddrinfo(NULL, PORTCHAT, &hints, &ai)) != 0) {
 		fprintf(stderr, "selectserver: %s\n", gai_strerror(rv));
 		exit(1);
 	}
@@ -81,7 +106,6 @@ int main(void)
 			close(listener);
 			continue;
 		}
-
 		break;
 	}
 
@@ -92,6 +116,28 @@ int main(void)
 	}
 
 	freeaddrinfo(ai); // all done with this
+    
+    if ((rv = getaddrinfo(NULL, PORTFILE, &hints, &ai)) != 0) {
+		fprintf(stderr, "selectserver: %s\n", gai_strerror(rv));
+		exit(1);
+	}
+	
+	for(p = ai; p != NULL; p = p->ai_next) {
+    
+    fileServer = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+		if (fileServer < 0) { 
+			continue;
+		}
+		
+		if (connect(fileServer, p->ai_addr, p->ai_addrlen) < 0) {
+			close(fileServer);
+			continue;
+		}
+        else printf("Connect to files server\n");
+		break;
+	}
+
+    freeaddrinfo(ai);
 
     // listen
     if (listen(listener, 10) == -1) {
@@ -99,11 +145,10 @@ int main(void)
         exit(3);
     }
 
-    // add the listener to the master set
     FD_SET(listener, &master);
-
+    FD_SET(fileServer, &master);
     // keep track of the biggest file descriptor
-    fdmax = listener; // so far, it's this one
+    fdmax = listener > fileServer ? listener : fileServer; // so far, it's this one
 
     // main loop
     for(;;) {
@@ -117,6 +162,7 @@ int main(void)
         }
 
         // run through the existing connections looking for data to read
+
         for(i = 0; i <= fdmax; i++) {
             
             if (FD_ISSET(i, &read_fds)) { // we got one!!
@@ -149,7 +195,26 @@ int main(void)
 								remoteIP, INET6_ADDRSTRLEN),
 							newfd);
                     }
-                } else {
+                } else if (i == fileServer){
+
+                    if ((nbytes = read(i, buf, sizeof(buf))) <= 0)
+                        perror("recv");
+
+                    char tmp_name[40];
+                    int i = 0;
+                    for(; i < nbytes && buf[i] != '@'; i++)
+                        tmp_name[i] = buf[i];
+                   
+                    tmp_name[i] = '\0';
+
+                    printf("CLIENT NAME = %s\n", tmp_name);
+                    for(int q = 0; q < clients_count; q++)
+                        if(!strcmp(tmp_name, clients[q].name)){
+                            write(clients[q].sock_fd, buf+i+1, sizeof(buf) - i - 1);
+                        }                    
+                      
+                }
+                else {
                     
                     int j = 0;
                     
@@ -172,7 +237,6 @@ int main(void)
                         FD_CLR(i, &master); // remove from master set
                     } else {
 
-                        printf("n = %d\n", nbytes);
 
                         for(int i = 0; i < strlen(buf); i++){
                             if(buf[i] < 32)
@@ -180,16 +244,34 @@ int main(void)
                         }
 
                         if(clients[j].name[0] == 0){
-                            strcpy(clients[j].name, buf);
-                            write(clients[j].sock_fd, "VARDASOK\n", 9);
-                        }else
+                            if(name_cheack(buf)){
+                                write(clients[j].sock_fd, "Try again\n", 11);;
+                            
+                            }
+                            else{
+                                strcpy(clients[j].name, buf);
+                                write(clients[j].sock_fd, "VARDASOK\n", 9);
+                            }
+                            continue;
+                        }
+                        if(!strcmp("@FS SAVE", buf) || !strcmp("@FS LOAD", buf)){
+
+                            time_t t = time(NULL);
+                            struct tm tm = *localtime(&t);
+                            char *msg = create_msg(clients[j].name, tm, clients[j].last_msg, buf); 
+                            printf("MSG = %s\n", msg);
+                            write(fileServer, msg,  strlen(msg));
+                            
+                        }
+                        else
                         {
-                            char tmp[1024];
-                            strcpy(tmp, buf);       
+
+                            strcpy(clients[j].last_msg, buf);       
                             strcpy(buf, "PRANESIMAS");
                             strcat(buf, clients[j].name);
                             strcat(buf, ": ");
-                            strcat(buf, tmp);
+                            strcat(buf, clients[j].last_msg);
+
                             buf[strlen(buf)] = '\n';
 
                             for(int k = 0; k < clients_count; k++) {
